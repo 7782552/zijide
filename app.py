@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 
 # 设置环境变量
 os.environ["G4F_DIR"] = "/tmp/g4f"
@@ -18,22 +19,40 @@ import g4f.Provider as Provider
 app = Flask(__name__)
 CORS(app)
 
-# 错误响应关键词 - 如果包含这些则认为失败
+# 错误响应关键词
 ERROR_KEYWORDS = [
     "does not exist",
-    "not available",
+    "not available", 
     "error",
     "failed",
     "unable to",
-    "cannot",
     "invalid",
     "unauthorized",
     "forbidden",
     "rate limit",
     "timeout",
     "not found",
-    "api.airforce",  # 特定错误源
 ]
+
+# 需要过滤的广告内容
+AD_PATTERNS = [
+    r"https?://llmplayground\.net",
+    r"Want best roleplay experience\?",
+    r"https?://[^\s]+playground[^\s]*",
+]
+
+def clean_response(response):
+    """清理响应中的广告内容"""
+    cleaned = str(response)
+    
+    for pattern in AD_PATTERNS:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+    
+    # 清理多余的空行
+    cleaned = re.sub(r'\n\s*\n', '\n\n', cleaned)
+    cleaned = cleaned.strip()
+    
+    return cleaned
 
 def is_valid_response(response):
     """检查响应是否有效"""
@@ -42,28 +61,21 @@ def is_valid_response(response):
     
     response_lower = str(response).lower()
     
-    # 检查是否包含错误关键词
     for keyword in ERROR_KEYWORDS:
         if keyword in response_lower:
             return False
     
-    # 响应太短可能是错误
-    if len(str(response).strip()) < 5:
+    if len(str(response).strip()) < 3:
         return False
     
     return True
 
 def get_working_providers():
-    """获取可用的 Provider，排除已知有问题的"""
+    """获取可用的 Provider"""
     
-    # 排除这些有问题的 provider
     excluded = [
-        'ApiAirforce',  # 模型不存在错误
-        'Retry',
-        'Base',
-        'BaseProvider', 
-        'AsyncProvider',
-        'CreateImagesProvider',
+        'Retry', 'Base', 'BaseProvider', 
+        'AsyncProvider', 'CreateImagesProvider',
     ]
     
     working = []
@@ -81,18 +93,18 @@ def get_working_providers():
     return working
 
 def get_response(messages, model="gpt-3.5-turbo"):
-    """尝试多个 Provider 直到获得有效响应"""
+    """尝试多个 Provider"""
     
     errors = []
     providers = get_working_providers()
     
-    # 优先尝试这些稳定的 provider
+    # 优先级排序（ApiAirforce 放后面因为有广告）
     priority_names = [
-        'DDG',           # DuckDuckGo - 通常稳定
-        'Blackbox',      # 通常可用
-        'Phind',         # 开发者友好
-        'Pizzagpt',      
-        'FreeChatgpt',   
+        'DDG',
+        'Blackbox',
+        'Phind',
+        'Pizzagpt',
+        'FreeChatgpt',
         'Koala',
         'FreeGpt',
         'ChatgptFree',
@@ -100,9 +112,9 @@ def get_response(messages, model="gpt-3.5-turbo"):
         'HuggingChat',
         'Liaobots',
         'You',
+        'ApiAirforce',  # 放后面，因为有广告
     ]
     
-    # 按优先级排序
     sorted_providers = []
     for name in priority_names:
         for p in providers:
@@ -110,22 +122,14 @@ def get_response(messages, model="gpt-3.5-turbo"):
                 sorted_providers.append(p)
                 break
     
-    # 添加其他 provider
     for p in providers:
         if p not in sorted_providers:
             sorted_providers.append(p)
     
-    # 尝试不同的模型名称
-    model_variants = [
-        model,
-        "gpt-3.5-turbo",
-        "gpt-4o-mini",
-        "gpt-4",
-        "",  # 让 provider 使用默认模型
-    ]
+    model_variants = [model, "gpt-3.5-turbo", "gpt-4o-mini", ""]
     
     for provider in sorted_providers[:12]:
-        for try_model in model_variants[:2]:  # 每个 provider 尝试2个模型
+        for try_model in model_variants[:2]:
             try:
                 response = g4f.ChatCompletion.create(
                     model=try_model if try_model else None,
@@ -137,22 +141,21 @@ def get_response(messages, model="gpt-3.5-turbo"):
                 
                 response_str = str(response).strip()
                 
-                # 验证响应是否有效
                 if is_valid_response(response_str):
-                    return response_str, provider.__name__, try_model or "default"
-                else:
-                    errors.append(f"{provider.__name__}: Invalid response - {response_str[:50]}")
+                    # 清理广告
+                    cleaned = clean_response(response_str)
+                    if cleaned:
+                        return cleaned, provider.__name__, try_model or "default"
                     
             except Exception as e:
                 errors.append(f"{provider.__name__}: {str(e)[:50]}")
                 continue
     
-    raise Exception(f"All providers failed. Errors: {'; '.join(errors[:5])}")
+    raise Exception(f"All providers failed")
 
 @app.route("/")
 def index():
     providers = get_working_providers()
-    provider_names = [p.__name__ for p in providers]
     
     return f"""
     <html>
@@ -160,24 +163,15 @@ def index():
     <body>
         <h1>🚀 G4F API Online</h1>
         <h3>Status: Running ✅</h3>
-        <h3>Available Providers ({len(providers)}):</h3>
-        <p>{', '.join(sorted(provider_names))}</p>
+        <p>Providers: {len(providers)} available</p>
         <hr>
-        <h3>Endpoints:</h3>
-        <ul>
-            <li><a href="/test">/test</a> - Quick test</li>
-            <li><a href="/providers">/providers</a> - List providers</li>
-            <li><a href="/health">/health</a> - Health check</li>
-        </ul>
+        <h3>Quick Test:</h3>
+        <p><a href="/test">/test</a></p>
         <h3>Chat API:</h3>
         <pre>
 POST /v1/chat/completions
-Content-Type: application/json
-
 {{
-    "messages": [
-        {{"role": "user", "content": "Hello"}}
-    ]
+    "messages": [{{"role": "user", "content": "Hello"}}]
 }}
         </pre>
     </body>
@@ -231,7 +225,7 @@ def list_models():
         "data": [{"id": m, "object": "model"} for m in models]
     })
 
-@app.route("/providers", methods=["GET"])
+@app.route("/providers")
 def list_providers():
     providers = get_working_providers()
     return jsonify({
@@ -243,24 +237,21 @@ def list_providers():
 def test():
     try:
         content, provider, model = get_response(
-            [{"role": "user", "content": "Say hi"}],
+            [{"role": "user", "content": "用中文说你好"}],
             "gpt-3.5-turbo"
         )
         return jsonify({
             "status": "success",
             "provider": provider,
             "model": model,
-            "response": content[:300]
+            "response": content
         })
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    app.run(host="0.0.0.0", port=8080)
