@@ -6,7 +6,5 @@ RUN pip install --no-cache-dir g4f flask flask-cors
 WORKDIR /app
 COPY app.py .
 
-EXPOSE 7860
-
-# 直接用 Flask 启动，不用 gunicorn
+# Zeabur 会自动设置 PORT 环境变量
 CMD ["python", "app.py"]
