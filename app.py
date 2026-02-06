@@ -1,40 +1,22 @@
 import os
-import sys
 import re
 
-# 设置环境变量
 os.environ["G4F_DIR"] = "/tmp/g4f"
 os.environ["G4F_NO_GUI"] = "1"
 
-# 创建目录
 for d in ["/tmp/g4f", "/tmp/har_and_cookies"]:
     os.makedirs(d, exist_ok=True)
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import g4f
-from g4f.Provider import __all__ as all_providers
 import g4f.Provider as Provider
+from g4f.Provider import __all__ as all_providers
 
 app = Flask(__name__)
 CORS(app)
 
-# 错误响应关键词
-ERROR_KEYWORDS = [
-    "does not exist",
-    "not available", 
-    "error",
-    "failed",
-    "unable to",
-    "invalid",
-    "unauthorized",
-    "forbidden",
-    "rate limit",
-    "timeout",
-    "not found",
-]
-
-# 需要过滤的广告内容
+# 广告过滤
 AD_PATTERNS = [
     r"https?://llmplayground\.net",
     r"Want best roleplay experience\?",
@@ -42,137 +24,182 @@ AD_PATTERNS = [
 ]
 
 def clean_response(response):
-    """清理响应中的广告内容"""
     cleaned = str(response)
-    
     for pattern in AD_PATTERNS:
         cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
-    
-    # 清理多余的空行
-    cleaned = re.sub(r'\n\s*\n', '\n\n', cleaned)
-    cleaned = cleaned.strip()
-    
-    return cleaned
+    return cleaned.strip()
 
 def is_valid_response(response):
-    """检查响应是否有效"""
-    if not response:
+    if not response or len(str(response).strip()) < 5:
         return False
     
+    error_keywords = ["does not exist", "not available", "error", "invalid", "unauthorized"]
     response_lower = str(response).lower()
     
-    for keyword in ERROR_KEYWORDS:
+    for keyword in error_keywords:
         if keyword in response_lower:
             return False
-    
-    if len(str(response).strip()) < 3:
-        return False
-    
     return True
 
-def get_working_providers():
-    """获取可用的 Provider"""
+# 模型和 Provider 配置
+MODEL_PROVIDERS = {
+    # DeepSeek R1
+    "deepseek-r1": [
+        ("Blackbox", "deepseek-r1"),
+        ("DeepInfra", "deepseek-r1"),
+        ("HuggingChat", "deepseek-r1"),
+        ("Liaobots", "deepseek-r1"),
+    ],
+    "deepseek": [
+        ("Blackbox", "deepseek-chat"),
+        ("DeepInfra", "deepseek-chat"),
+    ],
     
-    excluded = [
-        'Retry', 'Base', 'BaseProvider', 
-        'AsyncProvider', 'CreateImagesProvider',
+    # Claude
+    "claude-3.5-sonnet": [
+        ("Blackbox", "claude-sonnet-3.5"),
+        ("Liaobots", "claude-3.5-sonnet"),
+    ],
+    "claude-3-opus": [
+        ("Liaobots", "claude-3-opus"),
+    ],
+    "claude": [
+        ("Blackbox", "claude-sonnet-3.5"),
+        ("Liaobots", "claude-3.5-sonnet"),
+    ],
+    
+    # GPT-4
+    "gpt-4o": [
+        ("Blackbox", "gpt-4o"),
+        ("Liaobots", "gpt-4o"),
+        ("DDG", "gpt-4o-mini"),
+    ],
+    "gpt-4": [
+        ("Blackbox", "gpt-4o"),
+        ("Liaobots", "gpt-4"),
+        ("DDG", "gpt-4o-mini"),
+    ],
+    "gpt-4o-mini": [
+        ("DDG", "gpt-4o-mini"),
+        ("Blackbox", "gpt-4o"),
+        ("Pizzagpt", "gpt-4o-mini"),
+    ],
+}
+
+def get_providers_for_model(model):
+    """根据模型名获取对应的 Provider 列表"""
+    model_lower = model.lower()
+    
+    # 精确匹配
+    if model_lower in MODEL_PROVIDERS:
+        return MODEL_PROVIDERS[model_lower]
+    
+    # 模糊匹配
+    if "deepseek" in model_lower or "r1" in model_lower:
+        return MODEL_PROVIDERS["deepseek-r1"]
+    if "claude" in model_lower:
+        return MODEL_PROVIDERS["claude"]
+    if "gpt-4o-mini" in model_lower:
+        return MODEL_PROVIDERS["gpt-4o-mini"]
+    if "gpt-4" in model_lower or "gpt4" in model_lower:
+        return MODEL_PROVIDERS["gpt-4"]
+    
+    # 默认返回所有主要 Provider
+    return [
+        ("Blackbox", model),
+        ("DDG", "gpt-4o-mini"),
+        ("Liaobots", model),
+        ("DeepInfra", model),
     ]
+
+def get_response(messages, model="deepseek-r1"):
+    """获取 AI 响应"""
     
-    working = []
-    for provider_name in all_providers:
-        if provider_name in excluded:
-            continue
+    providers_to_try = get_providers_for_model(model)
+    errors = []
+    
+    for provider_name, provider_model in providers_to_try:
         try:
             provider = getattr(Provider, provider_name, None)
-            if provider and hasattr(provider, 'create_completion'):
-                needs_auth = getattr(provider, 'needs_auth', False)
-                if not needs_auth:
-                    working.append(provider)
-        except:
-            continue
-    return working
-
-def get_response(messages, model="gpt-3.5-turbo"):
-    """尝试多个 Provider"""
-    
-    errors = []
-    providers = get_working_providers()
-    
-    # 优先级排序（ApiAirforce 放后面因为有广告）
-    priority_names = [
-        'DDG',
-        'Blackbox',
-        'Phind',
-        'Pizzagpt',
-        'FreeChatgpt',
-        'Koala',
-        'FreeGpt',
-        'ChatgptFree',
-        'DeepInfra',
-        'HuggingChat',
-        'Liaobots',
-        'You',
-        'ApiAirforce',  # 放后面，因为有广告
-    ]
-    
-    sorted_providers = []
-    for name in priority_names:
-        for p in providers:
-            if p.__name__ == name:
-                sorted_providers.append(p)
-                break
-    
-    for p in providers:
-        if p not in sorted_providers:
-            sorted_providers.append(p)
-    
-    model_variants = [model, "gpt-3.5-turbo", "gpt-4o-mini", ""]
-    
-    for provider in sorted_providers[:12]:
-        for try_model in model_variants[:2]:
-            try:
-                response = g4f.ChatCompletion.create(
-                    model=try_model if try_model else None,
-                    messages=messages,
-                    provider=provider,
-                    stream=False,
-                    timeout=30
-                )
-                
-                response_str = str(response).strip()
-                
-                if is_valid_response(response_str):
-                    # 清理广告
-                    cleaned = clean_response(response_str)
-                    if cleaned:
-                        return cleaned, provider.__name__, try_model or "default"
-                    
-            except Exception as e:
-                errors.append(f"{provider.__name__}: {str(e)[:50]}")
+            if not provider:
                 continue
+            
+            response = g4f.ChatCompletion.create(
+                model=provider_model,
+                messages=messages,
+                provider=provider,
+                stream=False,
+                timeout=60
+            )
+            
+            response_str = str(response).strip()
+            
+            if is_valid_response(response_str):
+                cleaned = clean_response(response_str)
+                if cleaned:
+                    return cleaned, provider_name, provider_model
+                    
+        except Exception as e:
+            errors.append(f"{provider_name}({provider_model}): {str(e)[:40]}")
+            continue
     
-    raise Exception(f"All providers failed")
+    # 最后尝试自动模式
+    try:
+        response = g4f.ChatCompletion.create(
+            model=model,
+            messages=messages,
+            stream=False,
+            timeout=60
+        )
+        if is_valid_response(str(response)):
+            return clean_response(str(response)), "auto", model
+    except Exception as e:
+        errors.append(f"auto: {str(e)[:40]}")
+    
+    raise Exception(f"All failed: {'; '.join(errors[:4])}")
 
 @app.route("/")
 def index():
-    providers = get_working_providers()
-    
-    return f"""
+    return """
     <html>
-    <head><title>G4F API</title></head>
+    <head><title>G4F API - DeepSeek/Claude/GPT-4</title></head>
     <body>
         <h1>🚀 G4F API Online</h1>
-        <h3>Status: Running ✅</h3>
-        <p>Providers: {len(providers)} available</p>
+        <h2>支持的模型:</h2>
+        <h3>🔥 DeepSeek R1 (推荐)</h3>
+        <ul>
+            <li><code>deepseek-r1</code> - DeepSeek R1 推理模型</li>
+            <li><code>deepseek-chat</code> - DeepSeek Chat</li>
+        </ul>
+        
+        <h3>🟣 Claude</h3>
+        <ul>
+            <li><code>claude-3.5-sonnet</code></li>
+            <li><code>claude-3-opus</code></li>
+        </ul>
+        
+        <h3>🟢 GPT-4</h3>
+        <ul>
+            <li><code>gpt-4o</code></li>
+            <li><code>gpt-4o-mini</code></li>
+            <li><code>gpt-4</code></li>
+        </ul>
+        
         <hr>
-        <h3>Quick Test:</h3>
-        <p><a href="/test">/test</a></p>
-        <h3>Chat API:</h3>
+        <h3>测试:</h3>
+        <ul>
+            <li><a href="/test/deepseek">/test/deepseek</a> - 测试 DeepSeek R1</li>
+            <li><a href="/test/claude">/test/claude</a> - 测试 Claude</li>
+            <li><a href="/test/gpt4">/test/gpt4</a> - 测试 GPT-4</li>
+        </ul>
+        
+        <h3>API 使用:</h3>
         <pre>
 POST /v1/chat/completions
-{{
-    "messages": [{{"role": "user", "content": "Hello"}}]
-}}
+{
+    "model": "deepseek-r1",
+    "messages": [{"role": "user", "content": "你好"}]
+}
         </pre>
     </body>
     </html>
@@ -183,18 +210,18 @@ def chat():
     try:
         data = request.json or {}
         messages = data.get("messages", [])
-        model = data.get("model", "gpt-3.5-turbo")
+        model = data.get("model", "deepseek-r1")
         
         if not messages:
             return jsonify({"error": "messages is required"}), 400
         
-        content, provider_used, model_used = get_response(messages, model)
+        content, provider, actual_model = get_response(messages, model)
         
         return jsonify({
             "id": "chatcmpl-g4f",
             "object": "chat.completion",
-            "model": model_used,
-            "provider": provider_used,
+            "model": actual_model,
+            "provider": provider,
             "choices": [{
                 "index": 0,
                 "message": {
@@ -220,38 +247,91 @@ def chat():
 
 @app.route("/v1/models", methods=["GET"])
 def list_models():
-    models = ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-4"]
-    return jsonify({
-        "data": [{"id": m, "object": "model"} for m in models]
-    })
+    models = [
+        {"id": "deepseek-r1", "name": "DeepSeek R1"},
+        {"id": "deepseek-chat", "name": "DeepSeek Chat"},
+        {"id": "claude-3.5-sonnet", "name": "Claude 3.5 Sonnet"},
+        {"id": "claude-3-opus", "name": "Claude 3 Opus"},
+        {"id": "gpt-4o", "name": "GPT-4o"},
+        {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
+        {"id": "gpt-4", "name": "GPT-4"},
+    ]
+    return jsonify({"data": models})
 
-@app.route("/providers")
-def list_providers():
-    providers = get_working_providers()
-    return jsonify({
-        "count": len(providers),
-        "providers": sorted([p.__name__ for p in providers])
-    })
-
-@app.route("/test")
-def test():
+@app.route("/test/deepseek")
+def test_deepseek():
     try:
         content, provider, model = get_response(
-            [{"role": "user", "content": "用中文说你好"}],
-            "gpt-3.5-turbo"
+            [{"role": "user", "content": "你是什么模型？简短回答"}],
+            "deepseek-r1"
         )
         return jsonify({
             "status": "success",
             "provider": provider,
             "model": model,
-            "response": content
+            "response": content[:500]
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route("/test/claude")
+def test_claude():
+    try:
+        content, provider, model = get_response(
+            [{"role": "user", "content": "你是什么模型？简短回答"}],
+            "claude-3.5-sonnet"
+        )
+        return jsonify({
+            "status": "success",
+            "provider": provider,
+            "model": model,
+            "response": content[:500]
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/test/gpt4")
+def test_gpt4():
+    try:
+        content, provider, model = get_response(
+            [{"role": "user", "content": "你是什么模型？简短回答"}],
+            "gpt-4o"
+        )
+        return jsonify({
+            "status": "success",
+            "provider": provider,
+            "model": model,
+            "response": content[:500]
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/test")
+def test():
+    return """
+    <h1>选择测试模型:</h1>
+    <ul>
+        <li><a href="/test/deepseek">DeepSeek R1</a></li>
+        <li><a href="/test/claude">Claude 3.5</a></li>
+        <li><a href="/test/gpt4">GPT-4o</a></li>
+    </ul>
+    """
+
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
+
+@app.route("/providers")
+def list_providers():
+    available = []
+    for name in all_providers:
+        try:
+            p = getattr(Provider, name, None)
+            if p and hasattr(p, 'create_completion'):
+                available.append(name)
+        except:
+            pass
+    return jsonify({"providers": sorted(available)})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
