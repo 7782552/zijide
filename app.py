@@ -11,7 +11,11 @@ CORS(app)
 
 @app.route("/")
 def index():
-    return jsonify({"status": "online", "message": "G4F API is running!"})
+    return jsonify({
+        "status": "online",
+        "message": "G4F API is running!",
+        "usage": "POST /v1/chat/completions"
+    })
 
 @app.route("/health")
 def health():
@@ -32,7 +36,7 @@ def chat():
         return jsonify({
             "choices": [{
                 "message": {
-                    "role": "assistant", 
+                    "role": "assistant",
                     "content": str(response)
                 }
             }]
@@ -41,5 +45,7 @@ def chat():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    print("Server starting on port 7860...")
-    app.run(host="0.0.0.0", port=7860, debug=True)
+    # 关键：使用 Zeabur 提供的 PORT 环境变量
+    port = int(os.environ.get("PORT", 8080))
+    print(f"Server starting on port {port}...")
+    app.run(host="0.0.0.0", port=port)
