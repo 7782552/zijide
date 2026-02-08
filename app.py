@@ -13,20 +13,19 @@ CORS(app)
 
 @app.route("/")
 def index():
-    return "<h1>GPT-5 API</h1><p>OpenAI Compatible</p>"
+    return "<h1>GPT API</h1><p>OpenAI Compatible</p>"
 
 @app.route("/health")
 def health():
     return "OK"
 
-# 新增：模型列表（OpenAI 兼容）
 @app.route("/v1/models", methods=["GET"])
 def list_models():
     return jsonify({
         "object": "list",
         "data": [
-            {"id": "gpt-5", "object": "model", "owned_by": "openai"},
             {"id": "gpt-4", "object": "model", "owned_by": "openai"},
+            {"id": "gpt-4o-mini", "object": "model", "owned_by": "openai"},
         ]
     })
 
@@ -35,38 +34,94 @@ def chat():
     try:
         data = request.json
         messages = data.get("messages", [])
-        model = data.get("model", "gpt-5")
+        model = data.get("model", "gpt-4")
         
-        # 只用 Chatgpt4Online
-        from g4f.Provider import Chatgpt4Online
-        response = g4f.ChatCompletion.create(
-            model="gpt-4",
-            provider=Chatgpt4Online,
-            messages=messages,
-            stream=False,
-            timeout=120
-        )
+        response = None
+        provider_used = None
         
-        # OpenAI 兼容格式
-        return jsonify({
-            "id": f"chatcmpl-{int(time.time())}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": str(response)
-                },
-                "finish_reason": "stop"
-            }],
-            "usage": {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0
-            }
-        })
+        # 尝试 1: Koala
+        try:
+            from g4f.Provider import Koala
+            response = g4f.ChatCompletion.create(
+                model="gpt-4",
+                provider=Koala,
+                messages=messages,
+                stream=False,
+                timeout=60
+            )
+            if response:
+                provider_used = "Koala"
+        except:
+            pass
+        
+        # 尝试 2: DuckDuckGo
+        if not response:
+            try:
+                from g4f.Provider import DuckDuckGo
+                response = g4f.ChatCompletion.create(
+                    model="gpt-4o-mini",
+                    provider=DuckDuckGo,
+                    messages=messages,
+                    stream=False,
+                    timeout=60
+                )
+                if response:
+                    provider_used = "DuckDuckGo"
+            except:
+                pass
+        
+        # 尝试 3: PollinationsAI
+        if not response:
+            try:
+                from g4f.Provider import PollinationsAI
+                response = g4f.ChatCompletion.create(
+                    model="gpt-4o",
+                    provider=PollinationsAI,
+                    messages=messages,
+                    stream=False,
+                    timeout=60
+                )
+                if response:
+                    provider_used = "PollinationsAI"
+            except:
+                pass
+        
+        # 尝试 4: 自动选择
+        if not response:
+            try:
+                response = g4f.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=messages,
+                    stream=False
+                )
+                if response:
+                    provider_used = "Auto"
+            except:
+                pass
+        
+        if response:
+            return jsonify({
+                "id": f"chatcmpl-{int(time.time())}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model,
+                "provider": provider_used,
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": str(response)
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0
+                }
+            })
+        else:
+            return jsonify({"error": {"message": "All providers failed", "type": "api_error"}}), 500
         
     except Exception as e:
         return jsonify({"error": {"message": str(e), "type": "api_error"}}), 500
