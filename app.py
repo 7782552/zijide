@@ -1,4 +1,3 @@
-# app.py - 稳定版本
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import g4f
@@ -7,9 +6,8 @@ import json
 app = Flask(__name__)
 CORS(app)
 
-# ✅ 经过测试的稳定模型配置
+# ✅ 稳定模型配置
 STABLE_MODELS = {
-    # DeepSeek 模型
     "deepseek": {
         "provider": g4f.Provider.DeepSeek,
         "model": "deepseek-chat",
@@ -18,8 +16,6 @@ STABLE_MODELS = {
         "provider": g4f.Provider.DeepSeekV3,
         "model": "deepseek-reasoner",
     },
-    
-    # GPT 系列
     "gpt-4": {
         "provider": g4f.Provider.Liaobots,
         "model": "gpt-4-turbo",
@@ -29,17 +25,13 @@ STABLE_MODELS = {
         "model": "gpt-4o",
     },
     "gpt-4o-mini": {
-        "provider": g4f.Provider.DDG,  # DuckDuckGo - 非常稳定
+        "provider": g4f.Provider.DDG,
         "model": "gpt-4o-mini",
     },
-    
-    # Claude 系列
     "claude-3.5-sonnet": {
         "provider": g4f.Provider.Liaobots,
         "model": "claude-3.5-sonnet",
     },
-    
-    # 其他稳定模型
     "llama-3.1-70b": {
         "provider": g4f.Provider.DDG,
         "model": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
@@ -54,9 +46,9 @@ STABLE_MODELS = {
     },
 }
 
-# 备用 Provider 列表（按稳定性排序）
+# 备用 Provider
 FALLBACK_PROVIDERS = [
-    g4f.Provider.DDG,           # ⭐ 最稳定
+    g4f.Provider.DDG,
     g4f.Provider.ChatGptEs,
     g4f.Provider.Liaobots,
     g4f.Provider.FreeChatgpt,
@@ -80,7 +72,6 @@ def chat_with_fallback(messages, model_key="gpt-4o-mini"):
         except Exception as e:
             print(f"Primary provider failed: {e}")
     
-    # 降级到备用 Provider
     for provider in FALLBACK_PROVIDERS:
         try:
             response = g4f.ChatCompletion.create(
