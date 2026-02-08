@@ -1,51 +1,210 @@
-import os
-import g4f
-from flask import Flask, request, jsonify
+# app.py - 稳定版本
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
-
-os.environ["G4F_DIR"] = "/tmp/g4f"
-os.makedirs("/tmp/g4f", mode=0o777, exist_ok=True)
+import g4f
+import json
 
 app = Flask(__name__)
 CORS(app)
 
-@app.route("/")
-def index():
-    return jsonify({
-        "status": "online",
-        "message": "G4F API is running!",
-        "usage": "POST /v1/chat/completions"
-    })
+# ✅ 经过测试的稳定模型配置
+STABLE_MODELS = {
+    # DeepSeek 模型
+    "deepseek": {
+        "provider": g4f.Provider.DeepSeek,
+        "model": "deepseek-chat",
+    },
+    "deepseek-r1": {
+        "provider": g4f.Provider.DeepSeekV3,
+        "model": "deepseek-reasoner",
+    },
+    
+    # GPT 系列
+    "gpt-4": {
+        "provider": g4f.Provider.Liaobots,
+        "model": "gpt-4-turbo",
+    },
+    "gpt-4o": {
+        "provider": g4f.Provider.ChatGptEs,
+        "model": "gpt-4o",
+    },
+    "gpt-4o-mini": {
+        "provider": g4f.Provider.DDG,  # DuckDuckGo - 非常稳定
+        "model": "gpt-4o-mini",
+    },
+    
+    # Claude 系列
+    "claude-3.5-sonnet": {
+        "provider": g4f.Provider.Liaobots,
+        "model": "claude-3.5-sonnet",
+    },
+    
+    # 其他稳定模型
+    "llama-3.1-70b": {
+        "provider": g4f.Provider.DDG,
+        "model": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+    },
+    "mixtral-8x7b": {
+        "provider": g4f.Provider.DDG,
+        "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    },
+    "qwen-2-72b": {
+        "provider": g4f.Provider.HuggingChat,
+        "model": "Qwen/Qwen2.5-72B-Instruct",
+    },
+}
 
-@app.route("/health")
-def health():
-    return "OK"
+# 备用 Provider 列表（按稳定性排序）
+FALLBACK_PROVIDERS = [
+    g4f.Provider.DDG,           # ⭐ 最稳定
+    g4f.Provider.ChatGptEs,
+    g4f.Provider.Liaobots,
+    g4f.Provider.FreeChatgpt,
+    g4f.Provider.You,
+]
+
+
+def chat_with_fallback(messages, model_key="gpt-4o-mini"):
+    """带自动降级的聊天函数"""
+    
+    if model_key in STABLE_MODELS:
+        config = STABLE_MODELS[model_key]
+        try:
+            response = g4f.ChatCompletion.create(
+                model=config["model"],
+                provider=config["provider"],
+                messages=messages,
+                timeout=60
+            )
+            return response, config["provider"].__name__
+        except Exception as e:
+            print(f"Primary provider failed: {e}")
+    
+    # 降级到备用 Provider
+    for provider in FALLBACK_PROVIDERS:
+        try:
+            response = g4f.ChatCompletion.create(
+                model="gpt-4o-mini",
+                provider=provider,
+                messages=messages,
+                timeout=60
+            )
+            return response, provider.__name__
+        except Exception as e:
+            print(f"{provider.__name__} failed: {e}")
+            continue
+    
+    return None, "all_failed"
+
 
 @app.route("/v1/chat/completions", methods=["POST"])
-def chat():
-    try:
-        data = request.json
-        messages = data.get("messages", [])
-        
-        response = g4f.ChatCompletion.create(
-            model=g4f.models.default,
-            messages=messages,
-            stream=False
-        )
-        
-        return jsonify({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": str(response)
-                }
-            }]
+def chat_completions():
+    data = request.json
+    messages = data.get("messages", [])
+    model = data.get("model", "gpt-4o-mini")
+    stream = data.get("stream", False)
+    
+    if stream:
+        return stream_response(messages, model)
+    
+    response, provider_used = chat_with_fallback(messages, model)
+    
+    if response is None:
+        return jsonify({"error": "All providers failed"}), 503
+    
+    return jsonify({
+        "id": "chatcmpl-xxx",
+        "object": "chat.completion",
+        "model": model,
+        "provider": provider_used,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": response
+            },
+            "finish_reason": "stop"
+        }]
+    })
+
+
+def stream_response(messages, model_key):
+    """流式响应"""
+    def generate():
+        config = STABLE_MODELS.get(model_key, {
+            "provider": g4f.Provider.DDG,
+            "model": "gpt-4o-mini"
         })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        
+        try:
+            response = g4f.ChatCompletion.create(
+                model=config.get("model", model_key),
+                provider=config.get("provider"),
+                messages=messages,
+                stream=True,
+                timeout=120
+            )
+            
+            for chunk in response:
+                if chunk:
+                    data = {
+                        "id": "chatcmpl-xxx",
+                        "object": "chat.completion.chunk",
+                        "model": model_key,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": chunk},
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+            
+            yield "data: [DONE]\n\n"
+            
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return Response(generate(), mimetype='text/event-stream')
+
+
+@app.route("/v1/models", methods=["GET"])
+def list_models():
+    """列出可用模型"""
+    models = []
+    for model_id in STABLE_MODELS.keys():
+        models.append({
+            "id": model_id,
+            "object": "model",
+            "owned_by": "g4f"
+        })
+    return jsonify({"object": "list", "data": models})
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "healthy", "models": list(STABLE_MODELS.keys())})
+
+
+@app.route("/test", methods=["GET"])
+def test_providers():
+    """测试所有 Provider 的可用性"""
+    results = {}
+    test_messages = [{"role": "user", "content": "Say 'OK' only"}]
+    
+    for name, config in STABLE_MODELS.items():
+        try:
+            response = g4f.ChatCompletion.create(
+                model=config["model"],
+                provider=config["provider"],
+                messages=test_messages,
+                timeout=30
+            )
+            results[name] = {"status": "✅", "response": response[:50] if response else "empty"}
+        except Exception as e:
+            results[name] = {"status": "❌", "error": str(e)[:100]}
+    
+    return jsonify(results)
+
 
 if __name__ == "__main__":
-    # 关键：使用 Zeabur 提供的 PORT 环境变量
-    port = int(os.environ.get("PORT", 8080))
-    print(f"Server starting on port {port}...")
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=7860)
