@@ -44,41 +44,30 @@ def stream_response(messages, model):
                 model="gpt-4o-mini",
                 provider=g4f.Provider.DDG,
                 messages=messages,
-                stream=True,
-                timeout=120
+                stream=True
             )
             for chunk in response:
                 if chunk:
-                    data = {
-                        "choices": [{"delta": {"content": chunk}}]
-                    }
-                    yield f"data: {json.dumps(data)}\n\n"
+                    yield f"data: {json.dumps({'choices':[{'delta':{'content':chunk}}]})}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
-    
     return Response(generate(), mimetype='text/event-stream')
 
 
 @app.route("/v1/models", methods=["GET"])
 def list_models():
-    return jsonify({
-        "data": [
-            {"id": "gpt-4o-mini", "object": "model"},
-            {"id": "gpt-4", "object": "model"},
-            {"id": "claude-3", "object": "model"},
-        ]
-    })
+    return jsonify({"data": [{"id": "gpt-4o-mini"}]})
 
 
-@app.route("/health", methods=["GET"])
+@app.route("/health")
 def health():
-    return jsonify({"status": "ok"})
+    return "OK"
 
 
-@app.route("/", methods=["GET"])
+@app.route("/")
 def home():
-    return jsonify({"message": "G4F API Running"})
+    return "G4F API Running"
 
 
 if __name__ == "__main__":
