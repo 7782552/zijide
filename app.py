@@ -13,7 +13,7 @@ STABLE_MODELS = {
         "model": "deepseek-chat",
     },
     "deepseek-r1": {
-        "provider": g4f.Provider.DeepSeekV3,
+        "provider": g4f.Provider.DeepSeek,
         "model": "deepseek-reasoner",
     },
     "gpt-4": {
