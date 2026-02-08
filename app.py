@@ -12,10 +12,7 @@ STABLE_MODELS = {
         "provider": g4f.Provider.DeepSeek,
         "model": "deepseek-chat",
     },
-    "deepseek-r1": {
-        "provider": g4f.Provider.DeepSeek,
-        "model": "deepseek-reasoner",
-    },
+   
     "gpt-4": {
         "provider": g4f.Provider.Liaobots,
         "model": "gpt-4-turbo",
