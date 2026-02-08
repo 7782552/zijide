@@ -1,8 +1,7 @@
 import os
 import g4f
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-import json
 import time
 
 os.environ["G4F_DIR"] = "/tmp/g4f"
@@ -20,7 +19,7 @@ def index():
 def health():
     return "OK"
 
-# OpenAI 兼容：列出模型
+# 新增：模型列表（OpenAI 兼容）
 @app.route("/v1/models", methods=["GET"])
 def list_models():
     return jsonify({
@@ -28,21 +27,17 @@ def list_models():
         "data": [
             {"id": "gpt-5", "object": "model", "owned_by": "openai"},
             {"id": "gpt-4", "object": "model", "owned_by": "openai"},
-            {"id": "gpt-4o", "object": "model", "owned_by": "openai"},
-            {"id": "gpt-3.5-turbo", "object": "model", "owned_by": "openai"},
         ]
     })
 
-# OpenAI 兼容：聊天补全
 @app.route("/v1/chat/completions", methods=["POST"])
-def chat_completions():
+def chat():
     try:
         data = request.json
         messages = data.get("messages", [])
-        model = data.get("model", "gpt-4")
-        stream = data.get("stream", False)
+        model = data.get("model", "gpt-5")
         
-        # 调用 GPT-5
+        # 只用 Chatgpt4Online
         from g4f.Provider import Chatgpt4Online
         response = g4f.ChatCompletion.create(
             model="gpt-4",
@@ -52,9 +47,7 @@ def chat_completions():
             timeout=120
         )
         
-        response_text = str(response)
-        
-        # 返回 OpenAI 格式
+        # OpenAI 兼容格式
         return jsonify({
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion",
@@ -64,7 +57,7 @@ def chat_completions():
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": response_text
+                    "content": str(response)
                 },
                 "finish_reason": "stop"
             }],
