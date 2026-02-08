@@ -20,7 +20,7 @@ def health():
 
 @app.route("/v1/models", methods=["GET"])
 def models():
-    return jsonify({"models": ["gpt-4o", "claude-3.5-sonnet", "claude-3-haiku", "deepseek-chat"]})
+    return jsonify({"models": ["gpt-4o", "gpt-4", "claude-3-haiku", "llama-3.1-70b", "mixtral-8x7b"]})
 
 @app.route("/v1/chat/completions", methods=["POST"])
 def chat():
@@ -28,25 +28,25 @@ def chat():
     messages = data.get("messages")
     model = data.get("model", "gpt-4o")
     
-    # --- 尝试 1: Claude 3.5 Sonnet ---
+    # --- 尝试 1: DuckDuckGo (最稳定) ---
     try:
-        from g4f.Provider import PollinationsAI
+        from g4f.Provider import DuckDuckGo
         response = g4f.ChatCompletion.create(
-            model="claude-3.5-sonnet",
-            provider=PollinationsAI,
+            model="gpt-4o-mini",
+            provider=DuckDuckGo,
             messages=messages,
             stream=False
         )
         if response and "error" not in str(response).lower():
-            return jsonify({"choices": [{"message": {"role": "assistant", "content": str(response)}}], "model": "claude-3.5-sonnet"})
+            return jsonify({"choices": [{"message": {"role": "assistant", "content": str(response)}}], "model": "gpt-4o-mini"})
     except:
         pass
 
-    # --- 尝试 2: Claude 3 Haiku ---
+    # --- 尝试 2: Claude 3 Haiku (DuckDuckGo) ---
     try:
         from g4f.Provider import DuckDuckGo
         response = g4f.ChatCompletion.create(
-            model="claude-3-haiku", 
+            model="claude-3-haiku",
             provider=DuckDuckGo,
             messages=messages,
             stream=False
@@ -56,30 +56,44 @@ def chat():
     except:
         pass
 
-    # --- 尝试 3: GPT-4o ---
+    # --- 尝试 3: Llama 3.1 70B (DuckDuckGo) ---
     try:
-        from g4f.Provider import PollinationsAI
+        from g4f.Provider import DuckDuckGo
         response = g4f.ChatCompletion.create(
-            model="gpt-4o",
-            provider=PollinationsAI,
+            model="llama-3.1-70b",
+            provider=DuckDuckGo,
             messages=messages,
             stream=False
         )
         if response and "error" not in str(response).lower():
-            return jsonify({"choices": [{"message": {"role": "assistant", "content": str(response)}}], "model": "gpt-4o"})
+            return jsonify({"choices": [{"message": {"role": "assistant", "content": str(response)}}], "model": "llama-3.1-70b"})
     except:
         pass
 
-    # --- 尝试 4: GPT-4o 保底 ---
+    # --- 尝试 4: Mixtral (DuckDuckGo) ---
     try:
+        from g4f.Provider import DuckDuckGo
         response = g4f.ChatCompletion.create(
-            model="gpt-4o",
+            model="mixtral-8x7b",
+            provider=DuckDuckGo,
             messages=messages,
             stream=False
         )
-        return jsonify({"choices": [{"message": {"role": "assistant", "content": str(response)}}], "model": "gpt-4o-fallback"})
+        if response and "error" not in str(response).lower():
+            return jsonify({"choices": [{"message": {"role": "assistant", "content": str(response)}}], "model": "mixtral-8x7b"})
+    except:
+        pass
+
+    # --- 尝试 5: 自动选择 ---
+    try:
+        response = g4f.ChatCompletion.create(
+            model="gpt-4",
+            messages=messages,
+            stream=False
+        )
+        return jsonify({"choices": [{"message": {"role": "assistant", "content": str(response)}}], "model": "auto"})
     except Exception as e:
-        return jsonify({"error": f"所有模型均失效: {str(e)}"}), 500
+        return jsonify({"error": f"所有模型失败: {str(e)}"}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
