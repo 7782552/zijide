@@ -17,11 +17,10 @@ def chat_completions():
         return stream_response(messages, model)
     
     try:
+        # 不指定 provider，让 g4f 自动选择
         response = g4f.ChatCompletion.create(
             model="gpt-4o-mini",
-            provider=g4f.Provider.DDG,
-            messages=messages,
-            timeout=60
+            messages=messages
         )
         return jsonify({
             "id": "chatcmpl-xxx",
@@ -42,7 +41,6 @@ def stream_response(messages, model):
         try:
             response = g4f.ChatCompletion.create(
                 model="gpt-4o-mini",
-                provider=g4f.Provider.DDG,
                 messages=messages,
                 stream=True
             )
@@ -68,6 +66,13 @@ def health():
 @app.route("/")
 def home():
     return "G4F API Running"
+
+
+@app.route("/providers")
+def providers():
+    # 列出所有可用的 provider
+    p = [x for x in dir(g4f.Provider) if not x.startswith('_')]
+    return jsonify({"providers": p})
 
 
 if __name__ == "__main__":
